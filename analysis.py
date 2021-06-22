@@ -21,54 +21,15 @@ class SUMStat:
             path = self.path
         save_pickle(self.data, path)
 
-    def rank_systems(self, metric_list):
-        """ Get ranked systems based on metric_list. """
-        systems = list(self.data[self.sample_id]['sys_summs'].keys())
-        MAP = {k: 0 for k in systems}
-        for doc_id in self.data:
-            sys_summs = self.data[doc_id]['sys_summs']
-            for sys_name in sys_summs:
-                for m in metric_list:
-                    MAP[sys_name] += sys_summs[sys_name]['scores'][m]
-        MAP = [(k, v) for k, v in MAP.items()]
-        sorted_MAP = sorted(MAP, key=lambda x: x[1], reverse=True)
-        return [x[0] for x in sorted_MAP]
-
-    def evaluate_topk_summary(self, k, human_metric):
-        ranked_systems = self.rank_systems(self.human_metrics)
-        systems = ranked_systems[:k]
-        print(f'Human metric: {human_metric}, taking top-{k}')
-        headers = ['metric', 'spearman', 'kendalltau']
-        metric_with_corr = []
-        for metric in self.auto_metrics:
-            correlations = []
-            for doc_id in self.data:
-                target_scores = []
-                prediction_scores = []
-
-                sys_summs = self.data[doc_id]['sys_summs']
-                for sys_name in sys_summs:
-                    if sys_name not in systems:
-                        continue
-                    prediction_scores.append(sys_summs[sys_name]['scores'][metric])
-                    target_scores.append(sys_summs[sys_name]['scores'][human_metric])
-                if len(set(prediction_scores)) == 1 or len(set(target_scores)) == 1:
-                    continue
-                correlations.append([spearmanr(target_scores, prediction_scores)[0],
-                                     kendalltau(target_scores, prediction_scores)[0]])
-            corr_mat = np.array(correlations)
-            spearman, ktau = np.mean(corr_mat[:, 0]), np.mean(corr_mat[:, 1])
-            metric_with_corr.append([metric, spearman, ktau])
-        sorted_metric_with_corr = sorted(metric_with_corr, key=lambda x: x[1], reverse=True)
-        print(tabulate(sorted_metric_with_corr, headers=headers, tablefmt='simple'))
-
-    def evaluate_summary(self, human_metric, table=None):
+    def evaluate_summary(self, human_metric, auto_metrics=None, table=None):
         """ Evaluate summaries. Conduct summary-level correlations w.r.t each document """
         assert human_metric in self.human_metrics
+        if auto_metrics is None:
+            auto_metrics = self.auto_metrics
         print(f'Human metric: {human_metric}')
         headers = ['metric', 'spearman', 'kendalltau']
         metric_with_corr = []
-        for metric in self.auto_metrics:
+        for metric in auto_metrics:
             correlations = []
             for doc_id in self.data:
                 target_scores = []
@@ -93,11 +54,13 @@ class SUMStat:
             file.flush()
         print(tabulate(sorted_metric_with_corr, headers=headers, tablefmt='simple'))
 
-    def get_fact_pearson(self):
+    def get_fact_pearson(self, auto_metrics=None):
         assert 'QAGS' in self.path
         headers = ['metric', 'pearson']
         metric_with_corr = []
-        for metric in self.auto_metrics:
+        if auto_metrics is None:
+            auto_metrics = self.auto_metrics
+        for metric in auto_metrics:
             human_scores = []
             metric_scores = []
             for doc_id in self.data:
@@ -156,12 +119,14 @@ class SUMStat:
         else:
             return 0
 
-    def get_fact_acc(self):
+    def get_fact_acc(self, auto_metrics=None):
         """ Used for the Rank19 dataset. """
         assert 'Rank' in self.path
         headers = ['metric', 'acc']
         metric_with_acc = []
-        for metric in self.auto_metrics:
+        if auto_metrics is None:
+            auto_metrics = self.auto_metrics
+        for metric in auto_metrics:
             correct = 0
             for doc_id in self.data:
                 if self.data[doc_id]['sys_summs']['correct']['scores'][metric] > \
@@ -391,11 +356,13 @@ class D2TStat:
         self._metrics = list(self.data[self.sample_id]['scores'].keys())
         self._auto_metrics = [x for x in self.metrics if x not in self.human_metrics]
 
-    def evaluate_text(self, human_metric, table=None):
+    def evaluate_text(self, human_metric, auto_metrics=None, table=None):
         print(f'Human metric: {human_metric}')
         headers = ['metric', 'spearman', 'kendalltau']
         metric_with_corr = []
-        for metric in self.auto_metrics:
+        if auto_metrics is None:
+            auto_metrics = self.auto_metrics
+        for metric in auto_metrics:
             human_scores = []
             metric_scores = []
             for doc_id in self.data:
@@ -584,32 +551,14 @@ class WMTStat:
                 disc += 1
         return (conc - disc) / (conc + disc)
 
-    def print_ktau(self):
+    def print_ktau(self, metrics=None):
         headers = ['metric', 'k-tau']
         metric_with_ktau = []
         doc_ids = list(self.data.keys())
-        for metric in tqdm(self.metrics):
+        if metrics is None:
+            metrics = self.metrics
+        for metric in tqdm(metrics):
             better, worse = self.retrieve_scores(metric, doc_ids)
-            ktau = self.kendall(better, worse)
-            metric_with_ktau.append([metric, ktau])
-        sorted_metric_with_ktau = sorted(metric_with_ktau, key=lambda x: x[1], reverse=True)
-        print(tabulate(sorted_metric_with_ktau, headers=headers, tablefmt='simple'))
-
-    def print_topk_ktau(self, k):
-        headers = ['metric', 'k-tau']
-        metric_with_ktau = []
-        # Only consider a subset of systems
-        systems = self.systems[:k]
-        print(f'Considering {len(systems)} systems.')
-        # Get subids
-        sub_ids = []
-        for doc_id in tqdm(self.data):
-            if self.data[doc_id]['better']['sys_name'] in systems and self.data[doc_id]['worse']['sys_name'] in systems:
-                sub_ids.append(doc_id)
-        print(f'Considered samples: {len(sub_ids)}')
-
-        for metric in tqdm(self.metrics):
-            better, worse = self.retrieve_scores(metric, sub_ids)
             ktau = self.kendall(better, worse)
             metric_with_ktau.append([metric, ktau])
         sorted_metric_with_ktau = sorted(metric_with_ktau, key=lambda x: x[1], reverse=True)
@@ -629,7 +578,7 @@ class WMTStat:
         print(f'80% percentile: {np.percentile(ref_lens, 80)}')
         print(f'90% percentile: {np.percentile(ref_lens, 90)}')
 
-    def print_len_ktau(self, min_len, max_len):
+    def print_len_ktau(self, min_len, max_len, metrics=None):
         headers = ['metric', 'k-tau']
         metric_with_ktau = []
         sub_ids = []
@@ -638,7 +587,9 @@ class WMTStat:
             if min_len <= ref_len <= max_len:
                 sub_ids.append(doc_id)
         print(f'Considered samples: {len(sub_ids)}')
-        for metric in tqdm(self.metrics):
+        if metrics is None:
+            metrics = self.metrics
+        for metric in tqdm(metrics):
             better, worse = self.retrieve_scores(metric, sub_ids)
             ktau = self.kendall(better, worse)
             metric_with_ktau.append([metric, ktau])
@@ -663,7 +614,6 @@ class WMTStat:
             if m1_ktau > m2_ktau:
                 better += 1
 
-        print(better)
         if better > 950:
             return 1
         elif better < 50:
@@ -678,10 +628,3 @@ class WMTStat:
     @property
     def systems(self):
         return self._systems[self.lp]
-
-# stat.sig_test(['rouge1_r', 'rouge2_r', 'rougel_r', 'bert_score_r', 'mover_score', 'prism_hypo_ref', 'bart_score_hypo_ref', 'bart_score_cnn_hypo_ref', 'bart_score_para_hypo_ref', 'bart_score_cnn_hypo_ref_de_id est', 'bart_score_cnn_hypo_ref_de'])
-
-# bart_score_cnn_src_hypo_de_Shortly bart_score_cnn_src_hypo_en stat.sig_test(['rouge1_f', 'rouge2_f', 'rougel_f',
-# 'bert_score_f', 'mover_score', 'prism_src_hypo', 'bart_score_src_hypo', 'bart_score_cnn_src_hypo',
-# 'bart_score_para_src_hypo', 'bart_score_cnn_src_hypo_en', 'bart_score_cnn_src_hypo_en_In conclusion'], 'coherence')
-# stat.sig_test_two('bart_score_cnn_src_hypo_en', 'bart_score_cnn_src_hypo', 'coherence')

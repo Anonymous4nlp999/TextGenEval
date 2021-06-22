@@ -11,4 +11,4 @@ mv m39v1 models/
 rm m39v1.tar
 
 # Download COMET
-comet download -m wmt-large-da-estimator-1719 --saving_path ./models/
+comet download -m wmt-large-da-estimator-1718 --saving_path ./models/

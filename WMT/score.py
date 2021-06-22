@@ -5,7 +5,6 @@ import numpy as np
 from utils import *
 from tqdm import tqdm
 
-SRC_HYPO = read_file_to_list('files/src_hypo_prompt.txt')
 REF_HYPO = read_file_to_list('files/tiny_ref_hypo_prompt.txt')
 
 
@@ -153,7 +152,7 @@ class Scorer:
             elif metric_name == 'bert_score':
                 import bert_score
 
-                def run_bertscore(mt: list, ref: list) -> list:
+                def run_bertscore(mt: list, ref: list):
                     """ Runs BERTScores and returns precision, recall and F1 BERTScores ."""
                     _, _, f1 = bert_score.score(
                         cands=mt,
@@ -165,21 +164,21 @@ class Scorer:
                         verbose=True,
                         nthreads=4,
                     )
-                    return f1
+                    return f1.numpy()
 
                 start = time.time()
                 print(f'Begin calculating BERTScore.')
                 scores_better = run_bertscore(self.betters, self.refs)
                 scores_worse = run_bertscore(self.worses, self.refs)
                 print(f'Finished calculating BERTScore, time passed {time.time() - start}s.')
-                self.record(scores_better.numpy(), scores_worse.numpy(), 'bert_score')
+                self.record(scores_better, scores_worse, 'bert_score')
 
             elif metric_name == 'bart_score' or metric_name == 'bart_score_cnn' or metric_name == 'bart_score_para':
                 from bart_score import BARTScorer
 
                 def run_bartscore(scorer, mt: list, ref: list):
-                    hypo_ref = np.array(scorer.score_batch(mt, ref, batch_size=4))
-                    ref_hypo = np.array(scorer.score_batch(ref, mt, batch_size=4))
+                    hypo_ref = np.array(scorer.score(mt, ref, batch_size=4))
+                    ref_hypo = np.array(scorer.score(ref, mt, batch_size=4))
                     avg_f = 0.5 * (ref_hypo + hypo_ref)
                     return avg_f
 
@@ -229,30 +228,30 @@ class Scorer:
                 start = time.time()
                 print(f'BARTScore-P setup finished. Begin calculating BARTScore-P.')
                 for prompt in tqdm(REF_HYPO, total=len(REF_HYPO), desc='Calculating prompt.'):
-                    ref_better_en = np.array(bart_scorer.score_batch(suffix_prompt(self.refs, prompt), self.betters,
-                                                                     batch_size=4))
-                    better_ref_en = np.array(bart_scorer.score_batch(suffix_prompt(self.betters, prompt), self.refs,
-                                                                     batch_size=4))
+                    ref_better_en = np.array(bart_scorer.score(suffix_prompt(self.refs, prompt), self.betters,
+                                                               batch_size=4))
+                    better_ref_en = np.array(bart_scorer.score(suffix_prompt(self.betters, prompt), self.refs,
+                                                               batch_size=4))
 
                     better_scores = 0.5 * (ref_better_en + better_ref_en)
 
-                    ref_worse_en = np.array(bart_scorer.score_batch(suffix_prompt(self.refs, prompt), self.worses,
-                                                                    batch_size=5))
-                    worse_ref_en = np.array(bart_scorer.score_batch(suffix_prompt(self.worses, prompt), self.refs,
-                                                                    batch_size=5))
+                    ref_worse_en = np.array(bart_scorer.score(suffix_prompt(self.refs, prompt), self.worses,
+                                                              batch_size=5))
+                    worse_ref_en = np.array(bart_scorer.score(suffix_prompt(self.worses, prompt), self.refs,
+                                                              batch_size=5))
                     worse_scores = 0.5 * (ref_worse_en + worse_ref_en)
                     self.record(better_scores, worse_scores, f'{name}_en_{prompt}')
 
-                    ref_better_de = np.array(bart_scorer.score_batch(self.refs, prefix_prompt(self.betters, prompt),
-                                                                     batch_size=5))
-                    better_ref_de = np.array(bart_scorer.score_batch(self.betters, prefix_prompt(self.refs, prompt),
-                                                                     batch_size=5))
+                    ref_better_de = np.array(bart_scorer.score(self.refs, prefix_prompt(self.betters, prompt),
+                                                               batch_size=5))
+                    better_ref_de = np.array(bart_scorer.score(self.betters, prefix_prompt(self.refs, prompt),
+                                                               batch_size=5))
                     better_scores = 0.5 * (ref_better_de + better_ref_de)
 
-                    ref_worse_de = np.array(bart_scorer.score_batch(self.refs, prefix_prompt(self.worses, prompt),
-                                                                    batch_size=5))
-                    worse_ref_de = np.array(bart_scorer.score_batch(self.worses, prefix_prompt(self.refs, prompt),
-                                                                    batch_size=5))
+                    ref_worse_de = np.array(bart_scorer.score(self.refs, prefix_prompt(self.worses, prompt),
+                                                              batch_size=5))
+                    worse_ref_de = np.array(bart_scorer.score(self.worses, prefix_prompt(self.refs, prompt),
+                                                              batch_size=5))
                     worse_scores = 0.5 * (ref_worse_de + worse_ref_de)
                     self.record(better_scores, worse_scores, f'{name}_de_{prompt}')
                 print(f'Finished calculating BARTScore, time passed {time.time() - start}s.')

@@ -145,30 +145,21 @@ class Scorer:
                 print(f'Finished calculating MoverScore, time passed {time.time() - start}s.')
 
             elif metric_name == 'rouge':
-                import files2rouge
+                from gehrmann_rouge_opennmt.rouge_baselines.baseline import baseline_main
 
-                def rouge(saveto):
-                    def get_r_p_f(line):
-                        line_ = line.split(" ")
-                        r = float(line_[-3][-7:])
-                        p = float(line_[-2][-7:])
-                        f = float(line_[-1][-7:])
-                        return [r, p, f]
-
-                    lines = read_file_to_list(saveto)
-                    r1_, r2_, rl_ = None, None, None
-                    for line in lines:
-                        if line.startswith('1 ROUGE-1 Eval'):
-                            r1_ = get_r_p_f(line)
-                        if line.startswith('1 ROUGE-2 Eval'):
-                            r2_ = get_r_p_f(line)
-                        if line.startswith('1 ROUGE-L Eval'):
-                            rl_ = get_r_p_f(line)
+                def rouge(dic):
+                    """ Get r, p, f scores """
+                    r1_, r2_, rl_ = [], [], []
+                    for k in dic:
+                        r1_.append([dic[k]['rouge_1_recall'], dic[k]['rouge_1_precision'], dic[k]['rouge_1_f_score']])
+                        r2_.append([dic[k]['rouge_2_recall'], dic[k]['rouge_2_precision'], dic[k]['rouge_2_f_score']])
+                        rl_.append([dic[k]['rouge_l_recall'], dic[k]['rouge_l_precision'], dic[k]['rouge_l_f_score']])
                     return r1_, r2_, rl_
 
                 print(f'Begin calculating ROUGE.')
                 start = time.time()
                 blockPrint()
+
                 if not self.multi_ref:
                     ref_lines = [line.lower() for line in self.single_ref_lines]
                 else:
@@ -177,32 +168,37 @@ class Scorer:
                 for sys_name in self.sys_names:
                     sys_lines = self.get_sys_lines(sys_name)
                     sys_lines = [line.lower() for line in sys_lines]
+
                     rouge1_scores, rouge2_scores, rougel_scores = [], [], []
-                    for sys_line, ref_line in zip(sys_lines, ref_lines):
-                        write_list_to_file([sys_line], 'hypo.txt')
-                        if not self.multi_ref:
-                            write_list_to_file([ref_line], 'ref.txt')
-                            files2rouge.run('hypo.txt', 'ref.txt', rouge_args="-c 95 -r 1000 -n 2 -a -d",
-                                            saveto='saved_out.txt')
-                            r1, r2, rl = rouge('saved_out.txt')
+                    write_list_to_file(sys_lines, 'hypo.txt')
+                    if not self.multi_ref:
+                        write_list_to_file(ref_lines, 'ref.txt')
+                        args = argparse.Namespace(check_repeats=True, delete=True, get_each_score=True, stemming=True,
+                                                  method='sent_no_tag', n_bootstrap=1000, run_google_rouge=False,
+                                                  run_rouge=True, source='./hypo.txt', target='./ref.txt',
+                                                  ref_sep='||NEVER||', num_ref=1, temp_dir='./temp/')
+
+                        scores = baseline_main(args, return_pyrouge_scores=True)['individual_score_results']
+                        rouge1_scores, rouge2_scores, rougel_scores = rouge(scores)
+                    else:
+                        for i in range(self.ref_num):
+                            ref_list = [x[i] for x in ref_lines]
+                            write_list_to_file(ref_list, 'ref.txt')
+                            args = argparse.Namespace(check_repeats=True, delete=True, get_each_score=True,
+                                                      stemming=True,
+                                                      method='sent_no_tag', n_bootstrap=1000, run_google_rouge=False,
+                                                      run_rouge=True, source='./hypo.txt', target='./ref.txt',
+                                                      ref_sep='||NEVER||', num_ref=1, temp_dir='./temp/')
+
+                            scores = baseline_main(args, return_pyrouge_scores=True)['individual_score_results']
+                            r1, r2, rl = rouge(scores)
                             rouge1_scores.append(r1)
                             rouge2_scores.append(r2)
                             rougel_scores.append(rl)
-                        else:
-                            r1, r2, rl = [], [], []
-                            for i in range(self.ref_num):
-                                write_list_to_file([ref_line[i]], 'ref.txt')
-                                files2rouge.run('hypo.txt', 'ref.txt', rouge_args="-c 95 -r 1000 -n 2 -a -d",
-                                                saveto='saved_out.txt')
-                                curr_r1, curr_r2, curr_rl = rouge('saved_out.txt')
-                                r1.append(curr_r1)
-                                r2.append(curr_r2)
-                                rl.append(curr_rl)
-                            r1, r2, rl = np.array(r1), np.array(r2), np.array(rl)
-                            r1, r2, rl = np.mean(r1, axis=0), np.mean(r2, axis=0), np.mean(rl, axis=0)
-                            rouge1_scores.append(r1)
-                            rouge2_scores.append(r2)
-                            rougel_scores.append(rl)
+                        rouge1_scores = np.mean(rouge1_scores, axis=0)
+                        rouge2_scores = np.mean(rouge2_scores, axis=0)
+                        rougel_scores = np.mean(rougel_scores, axis=0)
+
                     counter = 0
                     for doc_id in self.data:
                         self.data[doc_id]['sys_summs'][sys_name]['scores'].update({
@@ -218,7 +214,7 @@ class Scorer:
                         })
                         counter += 1
                 enablePrint()
-                os.system('rm -rf hypo.txt ref.txt saved_out.txt')
+                os.system('rm -rf hypo.txt ref.txt')
                 print(f'Finished calculating ROUGE, time passed {time.time() - start}s.')
 
             elif metric_name == 'prism':
@@ -294,16 +290,16 @@ class Scorer:
                 for sys_name in self.sys_names:
                     sys_lines = self.get_sys_lines(sys_name)
                     sys_lines = [detokenize(line) for line in sys_lines]
-                    src_hypo = bart_scorer.score_batch(src_lines, sys_lines, batch_size=4)
+                    src_hypo = bart_scorer.score(src_lines, sys_lines, batch_size=4)
                     if not self.multi_ref:
-                        ref_hypo = np.array(bart_scorer.score_batch(ref_lines, sys_lines, batch_size=4))
-                        hypo_ref = np.array(bart_scorer.score_batch(sys_lines, ref_lines, batch_size=4))
+                        ref_hypo = np.array(bart_scorer.score(ref_lines, sys_lines, batch_size=4))
+                        hypo_ref = np.array(bart_scorer.score(sys_lines, ref_lines, batch_size=4))
                     else:
                         ref_hypo, hypo_ref = np.zeros(len(sys_lines)), np.zeros(len(sys_lines))
                         for i in range(self.ref_num):
                             ref_list = [x[i] for x in ref_lines]
-                            curr_ref_hypo = np.array(bart_scorer.score_batch(ref_list, sys_lines, batch_size=4))
-                            curr_hypo_ref = np.array(bart_scorer.score_batch(sys_lines, ref_list, batch_size=4))
+                            curr_ref_hypo = np.array(bart_scorer.score(ref_list, sys_lines, batch_size=4))
+                            curr_hypo_ref = np.array(bart_scorer.score(sys_lines, ref_list, batch_size=4))
                             ref_hypo += curr_ref_hypo
                             hypo_ref += curr_hypo_ref
                         ref_hypo = ref_hypo / self.ref_num
@@ -365,8 +361,8 @@ class Scorer:
                         for sys_name in self.sys_names:
                             sys_lines = self.get_sys_lines(sys_name)
                             sys_lines = [detokenize(line) for line in sys_lines]
-                            src_hypo_en = bart_scorer.score_batch(suffix_prompt(src_lines, prompt), sys_lines, batch_size=4)
-                            src_hypo_de = bart_scorer.score_batch(src_lines, prefix_prompt(sys_lines, prompt), batch_size=4)
+                            src_hypo_en = bart_scorer.score(suffix_prompt(src_lines, prompt), sys_lines, batch_size=4)
+                            src_hypo_de = bart_scorer.score(src_lines, prefix_prompt(sys_lines, prompt), batch_size=4)
                             counter = 0
                             for doc_id in self.data:
                                 self.data[doc_id]['sys_summs'][sys_name]['scores'].update({
@@ -382,19 +378,29 @@ class Scorer:
                             sys_lines = self.get_sys_lines(sys_name)
                             sys_lines = [detokenize(line) for line in sys_lines]
                             if not self.multi_ref:
-                                ref_hypo_en = np.array(bart_scorer.score_batch(suffix_prompt(ref_lines, prompt), sys_lines, batch_size=4))
-                                hypo_ref_en = np.array(bart_scorer.score_batch(suffix_prompt(sys_lines, prompt), ref_lines, batch_size=4))
-                                ref_hypo_de = np.array(bart_scorer.score_batch(ref_lines, prefix_prompt(sys_lines, prompt), batch_size=4))
-                                hypo_ref_de = np.array(bart_scorer.score_batch(sys_lines, prefix_prompt(ref_lines, prompt), batch_size=4))
+                                ref_hypo_en = np.array(
+                                    bart_scorer.score(suffix_prompt(ref_lines, prompt), sys_lines, batch_size=4))
+                                hypo_ref_en = np.array(
+                                    bart_scorer.score(suffix_prompt(sys_lines, prompt), ref_lines, batch_size=4))
+                                ref_hypo_de = np.array(
+                                    bart_scorer.score(ref_lines, prefix_prompt(sys_lines, prompt), batch_size=4))
+                                hypo_ref_de = np.array(
+                                    bart_scorer.score(sys_lines, prefix_prompt(ref_lines, prompt), batch_size=4))
                             else:
-                                ref_hypo_en, hypo_ref_en, ref_hypo_de, hypo_ref_de = np.zeros(len(sys_lines)), np.zeros(len(sys_lines)), \
-                                                                                     np.zeros(len(sys_lines)), np.zeros(len(sys_lines))
+                                ref_hypo_en, hypo_ref_en, ref_hypo_de, hypo_ref_de = np.zeros(len(sys_lines)), np.zeros(
+                                    len(sys_lines)), \
+                                                                                     np.zeros(len(sys_lines)), np.zeros(
+                                    len(sys_lines))
                                 for i in range(self.ref_num):
                                     ref_list = [x[i] for x in ref_lines]
-                                    curr_ref_hypo_en = np.array(bart_scorer.score_batch(suffix_prompt(ref_list, prompt), sys_lines, batch_size=4))
-                                    curr_hypo_ref_en = np.array(bart_scorer.score_batch(suffix_prompt(sys_lines, prompt), ref_list, batch_size=4))
-                                    curr_ref_hypo_de = np.array(bart_scorer.score_batch(ref_list, prefix_prompt(sys_lines, prompt), batch_size=4))
-                                    curr_hypo_ref_de = np.array(bart_scorer.score_batch(sys_lines, prefix_prompt(ref_list, prompt), batch_size=4))
+                                    curr_ref_hypo_en = np.array(
+                                        bart_scorer.score(suffix_prompt(ref_list, prompt), sys_lines, batch_size=4))
+                                    curr_hypo_ref_en = np.array(
+                                        bart_scorer.score(suffix_prompt(sys_lines, prompt), ref_list, batch_size=4))
+                                    curr_ref_hypo_de = np.array(
+                                        bart_scorer.score(ref_list, prefix_prompt(sys_lines, prompt), batch_size=4))
+                                    curr_hypo_ref_de = np.array(
+                                        bart_scorer.score(sys_lines, prefix_prompt(ref_list, prompt), batch_size=4))
                                     ref_hypo_en += curr_ref_hypo_en
                                     hypo_ref_en += curr_hypo_ref_en
                                     ref_hypo_de += curr_ref_hypo_de
@@ -485,8 +491,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
-"""
-python score.py --file Newsroom/data.pkl --device cuda:0 --output Newsroom/scores.pkl --bert_score --mover_score --rouge --bart_score --bart_score_cnn --bart_score_para --prism
-
-"""

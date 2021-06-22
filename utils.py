@@ -15,7 +15,7 @@ import re
 from collections import defaultdict as ddict
 from scipy.stats import pearsonr, spearmanr, kendalltau
 
-nltk.download('stopwords')
+# nltk.download('stopwords')
 detokenizer = MosesDetokenizer('en')
 
 
